@@ -1,33 +1,33 @@
-//Menentukan area penelitian
-var region = table;
+//1. Menentukan area penelitian
+var Bandung = ee.FeatureCollection('ft:1DBU7wSBrZShHw03i_viU1YsEZ12oqdUFtFNOSuja').geometry();
+var Cekban = ee.FeatureCollection('ft:1CXlHgB_oKshWXJRYnpnuzjrwN8wNfjh3m9asJpYd').geometry();
+var aoi = Bandung;
+//aoi = bandung untuk area kota Bandung, aoi = Cekban untuk area Cekungan Bandung
 
-//Membuat fungsi NDVI untuk dihitung belakangan
+//2.1 Membuat fungsi NDVI untuk dihitung belakangan
 var addNDVI = function(image) {
 	return image.addBands(image.normalizedDifference(['B5', 'B4']).rename('NDVI'));
 };
 
-//Membuat fungsi batas tutupan awan
-//Membuat limit awan 30%
+//2.2 Membuat fungsi batas tutupan awan. Membuat limit awan 30%
 var cloudMask = function(image) {
 	var clouds = ee.Algorithms.Landsat.simpleCloudScore(image).select(['cloud']);
 	return image.updateMask(clouds.lte(30));
 };
 
-//Memilih satelit dan batas waktu pengambilan gambar
+//2.3 Memilih satelit dan batas waktu pengambilan gambar
 var l8 = ee.ImageCollection('LANDSAT/LC08/C01/T1_RT_TOA')
-	.filterBounds(region)
-	.filterDate('2013-04-11', '2018-12-31')
+	.filterBounds(aoi)
+	.filterDate('2013-04-01', '2018-12-31')
 	.map(addNDVI)
 	.map(cloudMask);
 print(l8);
 
-//Memilih band yang diperlukan untuk penelitian (B10 dan NDVI)
+//2.4 Memilih kanal yang diperlukan untuk penelitian (B10 dan NDVI)
 var l8_2 = l8.select(['B10', 'NDVI']);
 var l8_2_NDVI = l8.select(['NDVI']);
 
-//Fungsi Fractional Vegetation
-
-//Membuat fungsi merubah nilai B10 menjadi suhu dalam Celsius
+//2.5 Membuat fungsi merubah nilai B10 menjadi suhu dalam Celsius
 var toCelsius2_l8 = function(image){
 	var time = image.get('system:time_start');
 	var celsius = image.expression('(B10/(1+(10.8*B10/14388)*log((0.004*((ndvi-0.2)/0.3)+0.986))))-273.15',
@@ -37,13 +37,13 @@ var toCelsius2_l8 = function(image){
 	return celsius;
 };
 
-//Membuat database baru l8_2_2
+//2.6 Membuat database baru l8_2_2
 var l8_2_2 = l8_2.map(toCelsius2_l8);
 
-//Membuat tabel time-series suhu rata-rata area penelitian
+//3.1 Membuat tabel time-series suhu rata-rata area penelitian
 var l8_2_2_time_median_region = l8_2_2.map(function(i) {
 	return i.select('celsius').reduceRegions({
-		collection: region, 
+		collection: aoi, 
 		reducer: ee.Reducer.median(), 
 		scale: 100 //bisa dibuat resolusi 30
 	}).filter(ee.Filter.neq('median', null))
@@ -52,18 +52,18 @@ var l8_2_2_time_median_region = l8_2_2.map(function(i) {
 	});
 }).flatten();
 
-//Mengekspor table ke Google Drive 
+// //3.1 Mengekspor table ke Google Drive 
+// 	Export.table.toDrive({
 // 	collection: l8_2_2_time_median_region.select(['.*'],null,false), 
 // 	description: 'l8_2_2_time_median_region',
 // 	folder:"/gee-analyses",
 // 	fileFormat: 'CSV'
 // });
 
-//Membuat tabel time-series standar deviasi suhu area penelitian
-// To get time-series standard deviation of temperature for the region.
+//3.2 Membuat tabel time-series standar deviasi suhu area penelitian
 var l8_2_2_time_stdev_region = l8_2_2.map(function(i) {
 	return i.select('celsius').reduceRegions({
-		collection: region, 
+		collection: aoi, 
 		reducer: ee.Reducer.stdDev(), 
 		scale: 100
 	}).filter(ee.Filter.neq('stdDev', null))
@@ -72,7 +72,7 @@ var l8_2_2_time_stdev_region = l8_2_2.map(function(i) {
 	});
 }).flatten();
 
-//Mengekspor tabel standar deviasi ke Google Drive
+// //3.2 Mengekspor tabel standar deviasi ke Google Drive
 // Export.table.toDrive({
 // 	collection: l8_2_2_time_stdev_region.select(['.*'],null,false), 
 // 	description: 'l8_2_2_time_stdev_region',
@@ -80,10 +80,10 @@ var l8_2_2_time_stdev_region = l8_2_2.map(function(i) {
 // 	fileFormat: 'CSV'
 // });
 
-//Membuat tabel time-series jumlah piksel area penelitian
+//3.2 Membuat tabel time-series jumlah piksel area penelitian
 var l8_2_2_time_count_region = l8_2_2.map(function(i) {
 	return i.select('celsius').reduceRegions({
-		collection: region, 
+		collection: aoi, 
 		reducer: ee.Reducer.count(), 
 		scale: 100
 	}).filter(ee.Filter.neq('count', null))
@@ -99,10 +99,10 @@ var l8_2_2_time_count_region = l8_2_2.map(function(i) {
 // 	fileFormat: 'CSV'
 // });
 
-//Membuat histogram piksel di area penelitian
+//3.3 Membuat histogram piksel di area penelitian
 var l8_2_2_time_hist_region = l8_2_2.map(function(i) {
 	return i.select('celsius').reduceRegions({
-		collection: region, 
+		collection: aoi, 
 		reducer: ee.Reducer.histogram(null, 0.25, null),
 		scale: 100
 	});
@@ -115,68 +115,72 @@ var l8_2_2_time_hist_region = l8_2_2.map(function(i) {
 // 	fileFormat: 'geoJSON'
 // });
 
-//Membuat gambar rata-rata temperatur area penelitian
+//3.4 Membuat gambar rata-rata temperatur area penelitian
 var l8_2_2_mean_region_image = l8_2_2.reduce(ee.Reducer.mean());
 
 //Memunculkan gambar rata-rata temperatur area penelitian di peta
-Map.addLayer(l8_2_2_mean_region_image.clip(table), {palette:['blue','green','orange','red'],min:0,max:35, scale:30}, 'mean temperature 2013-2018');
+Map.addLayer(l8_2_2_mean_region_image.clip(aoi), {palette:['blue','green','orange','red'],min:0,max:35, scale:30}, 'mean temperature 2013-2018');
 print(l8_2_2_mean_region_image);
 
 // Mengekspor gambar ke google drive
 Export.image.toDrive({
-	image: l8_2_2_mean_region_image.clip(region),
+	image: l8_2_2_mean_region_image.clip(aoi),
 	description: 'l8_2_2_mean_region_image',
 	folder:"/gee-analyses",
 	scale: 30,
-	region: region,
+	region: aoi,
 	crs: 'EPSG:3857',
 	maxPixels:1e13
 });
 
-//Membuat gambar median temperatur area penelitian
+//3.5 Membuat gambar median temperatur area penelitian
 var l8_2_2_median_region_image = l8_2_2.reduce(ee.Reducer.median());
 
 //Memunculkan gambar median temperatur area penelitian ke peta
-Map.addLayer(l8_2_2_median_region_image.clip(table), {palette:['blue','green','orange','red'],min:0,max:35, scale:30}, 'median temperature 2013-2018');
+Map.addLayer(l8_2_2_median_region_image.clip(aoi), {palette:['blue','green','orange','red'],min:0,max:35, scale:30}, 'median temperature 2013-2018');
 
 //Mengekspor gambar ke google drive
 Export.image.toDrive({
-	image: l8_2_2_median_region_image.clip(region),
+	image: l8_2_2_median_region_image.clip(aoi),
 	description: 'l8_2_2_median_region_image',
 	folder:"/gee-analyses",
 	scale: 30,
-	region: region,
+	region: aoi,
 	crs: 'EPSG:3857',
 	maxPixels:1e13
 });
 
-//Membuat gambar yang menunjukkan standar deviasi temperatur di area penelitian 
+//3.6 Membuat gambar yang menunjukkan standar deviasi temperatur di area penelitian 
 var l8_2_2_stdev_region_image = l8_2_2.reduce(ee.Reducer.stdDev());
 
 //Mengekspor gambar ke google drive
 // Export.image.toDrive({
-// 	image: l8_2_2_stdev_region_image.clip(region),
+// 	image: l8_2_2_stdev_region_image.clip(aoi),
 // 	description: 'l8_2_2_stdev_region_image',
 // 	folder:"/gee-analyses",
 // 	scale: 100,
-// 	region: region,
+// 	region: aoi,
 // 	crs: 'EPSG:3857',
 // 	maxPixels:1e13
 // });
 
-// // Membuat gambar rata-rata tahunan
+// // 3.7 Membuat gambar rata-rata tahunan
 // var l8_2_2_series1_mean = l8_2_2.filterDate('2013-04-11', '2014-12-31').mean();
 // var l8_2_2_series2_mean = l8_2_2.filterDate('2015-01-01', '2015-12-31').mean();
 // var l8_2_2_series3_mean = l8_2_2.filterDate('2016-01-01', '2016-12-31').mean();
 // var l8_2_2_series4_mean = l8_2_2.filterDate('2017-01-01', '2017-12-31').mean();
 // var l8_2_2_series5_mean = l8_2_2.filterDate('2018-01-01', '2019-04-30').mean();
 
+//4 Membuat grafik seri waktu masing-masing tata guna lahan
+
+// membuat simbologi
 var COLOR = {
   CITY: 'ff0000',
   PARK: '0000ff',
   FOREST: '00ff00'
 };
 
+// menentukan area yang ingin dibuat grafik seri waktunya
 var kota = ee.Feature(    // Kota.
     ee.Geometry.Rectangle(107.60, -6.920, 107.602, -6.922),
     {label: 'Kota'});
@@ -189,7 +193,6 @@ var tahura = ee.Feature(  // Tahura Djuanda.
 var titikpengamatan = new ee.FeatureCollection([kota, baksil, tahura]);
 
 //Membuat grafik time-series area penelitian dan suhu
-
 var tempTimeSeries = ui.Chart.image.seriesByRegion({
   imageCollection: l8_2_2,
   regions: titikpengamatan,
@@ -216,6 +219,7 @@ tempTimeSeries.setOptions({
 
 print(tempTimeSeries);
 
+//Menampilkan polygon di layar 
 Map.addLayer(baksil, {color: COLOR.PARK});
 Map.addLayer(tahura, {color: COLOR.FOREST});
 Map.addLayer(kota, {color: COLOR.CITY});
