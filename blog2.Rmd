@@ -1,0 +1,123 @@
+---
+title: "Rayshader with Sentinel-2 Image Overlay"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+Yesterday, Tyler Morgan-Wall, the creator of Rayrender and Rayshader mentioned me on Twitter. That was because like weeks ago he tweeted if anyone interested to know how to overlay satellite imagery with his beautiful rayrender digital elevation model. I have been trying to do this by following the tutorial made by Will Bishop https://github.com/wcmbishop/rayshader-demo, but somehow I always fail to overlay my png images to the digital elevation. I was so happy that finally Tyler make a tutorial about this, so I play with the tutorial immediately. This is the tutorial by Tyler, I really recommend this if you are interested to make beautiful DEM overlay with satellite images https://www.tylermw.com/a-step-by-step-guide-to-making-3d-maps-with-satellite-imagery-in-r/.
+
+After I read the tutorial, I realize that I can add something to this tutorial, especially in downloading the images, which can quite tedious if you download Landsat Images from Earth Explorer, as we have to download the data as a bulk. The data is huge, especially for people with poor internet connection. It can be up to 1-2 GB. I propose to use Sentinel-2 data which can be downloaded from EO Browser https://apps.sentinel-hub.com/eo-browser/. This apps allows us to clip area of interest. Not only the AoI, but this apps also allows us to download only selected bands and even visualized layers, in my case True Color layer. Using this apps, I usually download a tiff image for no larger than 30 MB. 
+
+I also use elevatr package developed by Jeffrey W. Hollister https://github.com/jhollist/elevatr to download SRTM data provided by U.S. Geological Survey. This package allows us to call the data from R, so that we don't have to google for it. 
+
+```{r}
+#load necessary packages
+library(raster)
+library(sp)
+library(rayshader)
+library(elevatr)
+library(leaflet)
+```
+
+I make a function to define area of interest. This AoI will be used to download SRTM data and later clip it. This AoI will also be used to clip satellite imagery data. We can see if the AoI is ok using leaflet. 
+
+```{r echo=TRUE}
+#AoI Function
+AOI <- function(xleft, ytop, xright, ybot) {
+  x_coord <- c(xleft,xleft,xright,xright)
+  y_coord <- c(ytop,ybot, ybot, ytop)
+  xym <- cbind(x_coord, y_coord)
+  p <- Polygon(xym)
+  ps = Polygons(list(p),1)
+  sps = SpatialPolygons(list(ps))
+  proj4string(sps) = CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+  return(sps)
+}
+
+mask <- AOI(125.3645, 2.812 , 125.4571, 2.73)
+leaflet(mask) %>% 
+  addTiles() %>% 
+  addPolygons()
+
+```
+
+After checking if the AoI is good enough, we can call our raster images using raster::brick. Brick is used because the image is only one file. If you are using multiband images, you will call it using raster::raster. Later we can plot it using plotRGB function. 
+
+```{r echo=TRUE}
+#call sentinel-2 image
+satellite_imagery <- raster::brick("2019-11-20, Volcanoes, S2L2A, True Color + IR highlights.tiff")
+projectRaster(satellite_imagery, 
+              crs= "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+
+#plot sentinel-2 image
+plotRGB(satellite_imagery)
+```
+
+Digital Elevation Model is called using get_elev_raster from elevatr package. It is very important to make the projection to be equal. In this purpose I use default crs, which is WGS844 longitude latitude. We can plot the file using height_shade(raster_to_matrix) function
+
+```{r echo=TRUE}
+#Download DEM using elevatr
+Elevation_File <- get_elev_raster(mask, z=11)
+Elevation_File
+#reproject the DEM
+projectRaster(Elevation_File, 
+              crs= "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+
+#plot raster DEM
+height_shade(raster_to_matrix(Elevation_File)) %>%
+  plot_map()
+
+leaflet(mask) %>% 
+  addTiles() %>% 
+  addPolygons() %>% 
+  addRasterImage(Elevation_File, opacity = 0.5)
+
+```
+
+I cropped my file using crop function. I clipped it using AoI which I named "mask". Afterward I plotted it.
+```{r echo=TRUE}
+
+elevation_mask <- crop(Elevation_File, mask)
+satellite_imagery_mask <- crop(satellite_imagery, mask)
+
+plot1 <- leaflet() %>% 
+  addTiles() %>% 
+  addRasterImage(elevation_mask, opacity =0.5)
+plot1
+```
+
+```{r echo=TRUE}
+plotRGB(satellite_imagery_mask)
+```
+
+From here and after I just follow Tyler's tutorial. So I make my data to be matrix. Satellite data has to be differentiate as r,g,b because that is how color has to be treated (color is combination of red, green, and blue bands). 
+
+I will just quote Tyler Morgan-Wall himself for this section:
+  "Now we’ll crop our datasets to the same region, and create an 3-layer RGB array of the image intensities. This is what rayshader needs as input to drape over the elevation values. We also need to transpose the array, since rasters and arrays are oriented differently in R, because of course they are🙄. We do that with the aperm() function, which performs a multi-dimensional transpose. We’ll also convert our elevation data to a base R matrix, which is what rayshader expects for elevation data."
+
+```{r}
+names(satellite_imagery_mask) = c("r","g","b")
+
+satellite_imagery_mask_r = rayshader::raster_to_matrix(satellite_imagery_mask$r)
+satellite_imagery_mask_g = rayshader::raster_to_matrix(satellite_imagery_mask$g)
+satellite_imagery_mask_b = rayshader::raster_to_matrix(satellite_imagery_mask$b)
+satellite_imagery_mask
+elevation_matrix = rayshader::raster_to_matrix(elevation_mask)
+elevation_mask
+sentinel_mask_array = array(0,dim=c(nrow(satellite_imagery_mask_r),ncol(satellite_imagery_mask_r),3))
+
+sentinel_mask_array[,,1] = satellite_imagery_mask_r/255 #Red layer
+sentinel_mask_array[,,2] = satellite_imagery_mask_g/255 #Blue layer
+sentinel_mask_array[,,3] = satellite_imagery_mask_b/255 #Green layer
+
+sentinel_mask_array = aperm(sentinel_mask_array, c(2,1,3))
+
+plot_3d(sentinel_mask_array, elevation_matrix, windowsize = c(1100,900), zscale = 30, shadowdepth = -50,
+        zoom=0.5, phi=45,theta=-45,fov=70, background = "#F2E1D0", shadowcolor = "#523E2B")
+render_snapshot(title_text = "Karangetang Volcano, Indonesia | Imagery: Sentinel-2 | DEM: 30m SRTM",
+                  title_bar_color = "#1f5214", title_color = "white", title_bar_alpha = 1)
+```
+
+
+
